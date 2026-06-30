@@ -99,7 +99,7 @@ if st.sidebar.button("تحديث ودمج الملفات الجديدة"):
     st.sidebar.success(f"تم تحديث ودمج {count} ملفات بنجاح!")
 
 if username:
-    st.sidebar.success(f"مرحباً بك يا {username}!")
+    st.sidebar.success(f"مرحباً بك يا {username}")
 
     if f"chat_{username}" not in st.session_state:
         st.session_state[f"chat_{username}"] = load_messages(username)
