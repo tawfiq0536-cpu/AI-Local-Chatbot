@@ -3,24 +3,22 @@ import sqlite3
 import os
 from langchain_openai import ChatOpenAI
 
-# 1. إعداد قاعدة بيانات الأنظمة والمواد المستوردة من الإكسل
+# 1. إعداد قاعدة البيانات
 DB_NAME = "regulations.db"
 CHAT_DB = "chatbot_net.db"
 
+
 def init_chat_db():
-    """إنشاء قاعدة بيانات فرعية لحفظ محادثات المستخدمين وفصل الجلسات"""
     conn = sqlite3.connect(CHAT_DB)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS chat_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            sender TEXT,
-            message TEXT
+            id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, sender TEXT, message TEXT
         )
     ''')
     conn.commit()
     conn.close()
+
 
 def save_message(username, sender, message):
     conn = sqlite3.connect(CHAT_DB)
@@ -28,6 +26,7 @@ def save_message(username, sender, message):
     cursor.execute("INSERT INTO chat_history (username, sender, message) VALUES (?, ?, ?)", (username, sender, message))
     conn.commit()
     conn.close()
+
 
 def load_messages(username):
     conn = sqlite3.connect(CHAT_DB)
@@ -37,114 +36,125 @@ def load_messages(username):
     conn.close()
     return [{"sender": row[0], "message": row[1]} for row in rows]
 
-# تشغيل قاعدة بيانات الذاكرة فوراً
+
 init_chat_db()
 
-# 2. جلب مفتاح الـ API بأمان من إعدادات Secrets في Streamlit Cloud
+
+# دالة دمج الملفات مع حفظ اسم الملف كـ "قسم"
+def merge_all_excel_files():
+    import pandas as pd
+    current_dir = os.getcwd()
+
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DROP TABLE IF EXISTS legal_articles")
+    conn.commit()
+
+    success_count = 0
+    for file_name in os.listdir(current_dir):
+        if (file_name.endswith('.csv') or file_name.endswith('.xlsx')) and not file_name.startswith('~$'):
+            try:
+                if file_name.endswith('.csv'):
+                    df = pd.read_csv(file_name, encoding='utf-8')
+                else:
+                    df = pd.read_excel(file_name)
+
+                df.columns = df.columns.str.strip()
+
+                # إخراج اسم القسم من اسم الملف (بدون الامتداد .xlsx أو .csv)
+                section_name = os.path.splitext(file_name)[0].replace(".xlsx", "").replace(" - ورقة1", "")
+
+                # إضافة عمود جديد يحتوي على اسم الملف كـ "قسم" لكل الصفوف
+                df["اسم القسم"] = section_name
+
+                df.to_sql(name="legal_articles", con=conn, if_exists="append", index=False)
+                success_count += 1
+            except Exception as e:
+                pass
+    conn.close()
+    return success_count
+
+
+# تشغيل الدمج تلقائياً عند بدء التطبيق محلياً لتحديث الداتابيز
+if not os.path.exists(DB_NAME):
+    merge_all_excel_files()
+
+# 2. إعداد عقل الذكاء الاصطناعي
 if "OPENAI_API_KEY" in st.secrets:
     openai_api_key = st.secrets["OPENAI_API_KEY"]
 else:
     openai_api_key = os.environ.get("OPENAI_API_KEY")
 
-# 3. إعداد عقل الذكاء الاصطناعي
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=openai_api_key)
 
-# 4. بناء واجهة المستخدم بـ Streamlit
+# 3. بناء الواجهة
 st.set_page_config(page_title="AI Database Chatbot", layout="centered")
-st.title("🤖 شات بوت الاستعلام من قاعدة البيانات")
+st.title("🤖 شات بوت الاستعلام من الأقسام واللوائح")
 
-# نظام تعدد المستخدمين
-username = st.sidebar.text_input("الرجاء إدخل اسمك لتسجيل الدخول:", value="").strip()
+username = st.sidebar.text_input("الرجاء إدخال اسمك لتسجيل الدخول:", value="").strip()
+
+# زر مخصص في القائمة الجانبية لإعادة دمج الملفات إذا أضفت ملفاً جديداً مستقبلاً
+if st.sidebar.button("تحديث ودمج الملفات الجديدة"):
+    count = merge_all_excel_files()
+    st.sidebar.success(f"تم تحديث ودمج {count} ملفات بنجاح!")
 
 if username:
     st.sidebar.success(f"مرحباً بك يا {username}!")
 
-    # تحميل الذاكرة الخاصة باليوزر
     if f"chat_{username}" not in st.session_state:
         st.session_state[f"chat_{username}"] = load_messages(username)
 
-    # عرض المحادثات السابقة
     for msg in st.session_state[f"chat_{username}"]:
         with st.chat_message(msg["sender"]):
             st.write(msg["message"])
 
-    # استقبال الرسائل الجديدة
-    if user_input := st.chat_input("اكتب سؤالك للاستعلام من اللوائح والأنظمة..."):
-        # عرض رسالة اليوزر وحفظها
+    if user_input := st.chat_input("اكتب سؤالك هنا..."):
         with st.chat_message("user"):
             st.write(user_input)
         save_message(username, "user", user_input)
         st.session_state[f"chat_{username}"].append({"sender": "user", "message": user_input})
 
-        # توليد رد الذكاء الاصطناعي المقيّد
         with st.chat_message("assistant"):
-            with st.spinner("جاري البحث في قاعدة البيانات..."):
+            with st.spinner("جاري البحث في الأقسام واللوائح..."):
                 rows = []
-                db_context = "لا توجد بيانات مطابقة نهائياً في قاعدة البيانات."
+                db_context = "لا توجد بيانات مطابقة."
                 try:
-                    # أ. الاتصال بقاعدة بيانات الإكسل والبحث عن الكلمات المفتاحية
                     conn = sqlite3.connect(DB_NAME)
                     cursor = conn.cursor()
-                    
-                    # قراءة أسماء الأعمدة الموجودة في الجدول لتجنب الأخطاء الإملائية
-                    cursor.execute("PRAGMA table_info(legal_articles)")
-                    columns_info = cursor.fetchall()
-                    
-                    if columns_info:
-                        # بناء استعلام ديناميكي يبحث في كل الأعمدة النصية المتوفرة داخل الجدول
-                        search_conditions = []
-                        search_params = []
-                        search_query = f"%{user_input}%"
-                        
-                        for col in columns_info:
-                            col_name = col[1]
-                            search_conditions.append(f'"{col_name}" LIKE ?')
-                            search_params.append(search_query)
-                        
-                        # دمج الشروط بـ OR للبحث في كل مكان
-                        where_clause = " OR ".join(search_conditions)
-                        sql_statement = f"SELECT * FROM legal_articles WHERE {where_clause} LIMIT 3"
-                        
-                        cursor.execute(sql_statement, search_params)
-                        rows = cursor.fetchall()
+
+                    search_query = f"%{user_input}%"
+                    # البحث في نص المادة أو رقم المادة
+                    cursor.execute(
+                        'SELECT "اسم القسم", "رقم المادة", "نص المادة" FROM legal_articles WHERE "نص المادة" LIKE ? OR "رقم المادة" LIKE ? LIMIT 3',
+                        (search_query, search_query))
+                    rows = cursor.fetchall()
                     conn.close()
-                    
-                    # تجميع سياق البيانات المستخرجة بشكل مرن متوافق مع أي هيكلة
+
                     if rows:
                         db_context = ""
                         for row in rows:
-                            # دمج بيانات الصف بالكامل مع فلترة القيم الفارغة بشكل صحيح بنظام بايثون
-                            row_text = " | ".join([str(item) for item in row if item is not None])
-                            db_context += f"\n- البيانات المستخرجة: {row_text}\n"
-                    
-                    # ب. صياغة التوجيه الصارم (System Prompt) لتقييد البوت
-                    strict_prompt = f"""أنت مساعد ذكي ومهمتك هي الإجابة على أسئلة المستخدم بناءً على 'قاعدة البيانات الملحقة' فقط وحصرياً.
+                            db_context += f"\n- [القسم/الملف]: {row[0]} | المادة: {row[1]} | النص: {row[2]}\n"
+
+                    strict_prompt = f"""أنت مساعد ذكي ومهمتك الإجابة بناءً على 'قاعدة البيانات الملحقة' فقط وحصرياً.
+يجب عليك ذكر اسم [القسم/الملف] ورقم المادة بوضوح في بداية إجابتك ليعرف المستخدم مصدر المعلومة.
 
 [قاعدة البيانات الملحقة]:
 {db_context}
 
-[شروط صارمة جداً]:
-1. إذا كانت الإجابة على سؤال المستخدم موجودة في [قاعدة البيانات الملحقة]، صغ الإجابة بشكل واضح ومؤدب باللغة العربية مع ذكر تفاصيل المادة المرفقة.
-2. إذا لم تكن الإجابة موجودة بشكل واضح، أو إذا سألك المستخدم عن أي معلومات عامة خارج نطاق النص الملحق، يجب عليك الرد بالعبارة التالية نصاً ودون أي زيادة: "عذراً، هذه المعلومة غير متوفرة في قاعدة البيانات لدي حالياً."
-3. لا تخترع، لا تخمن، ولا تستخدم معلوماتك العامة السابقة أبداً تحت أي ظرف.
-
 سؤال المستخدم: {user_input}
 الإجابة:"""
 
-                    # استدعاء النموذج
                     ai_response = llm.invoke(strict_prompt).content
-                    
+
                 except Exception as e:
-                    # حل بديل في حال وجود مشكلة بالـ API: يعرض النص المستعلم مباشرة
                     if rows:
-                        ai_response = f"⚠️ (تم العثور على المواد التالية في قاعدة البيانات):\n{db_context}"
+                        ai_response = f"⚠️ (تم العثور على المواد التالية):\n{db_context}"
                     else:
                         ai_response = "عذراً، هذه المعلومة غير متوفرة في قاعدة البيانات لدي حالياً."
 
                 st.write(ai_response)
 
-        # حفظ رد البوت في قاعدة البيانات والـ Session
         save_message(username, "assistant", ai_response)
         st.session_state[f"chat_{username}"].append({"sender": "assistant", "message": ai_response})
 else:
-    st.info("يرجى كتابة اسمك في القائمة الجانبية للبدء بالمحادثة.")
+    st.info("يرجى كتابة اسمك في القائمة الجانبية للبدء.")
