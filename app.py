@@ -3,11 +3,7 @@ import sqlite3
 import os
 from langchain_openai import ChatOpenAI
 
-# 1. إعداد مفتاح OpenAI (استبدله بمفتاحك الخاص أو وضعه في البيئة)
-# يمكنك الحصول عليه من منصة OpenAI
-os.environ["OPENAI_API_KEY"] = "ضع_مفتاح_الـ_API_الخاص_بـ_OpenAI_هنا"
-
-# 2. إعداد قاعدة البيانات المحلية (تخزين الذاكرة لكل يوزر)
+# 1. إعداد قاعدة البيانات المحلية (تخزين الذاكرة لكل يوزر)
 DB_NAME = "chatbot_net.db"
 
 
@@ -47,8 +43,14 @@ def load_messages(username):
 # تشغيل دالة إنشاء قاعدة البيانات فوراً
 init_db()
 
-# 3. إعداد عقل الذكاء الاصطناعي
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+# 2. قراءة مفتاح الـ API بأمان من إعدادات Secrets الخاصة بـ Streamlit Cloud
+if "OPENAI_API_KEY" in st.secrets:
+    openai_api_key = st.secrets["OPENAI_API_KEY"]
+else:
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+
+# 3. إعداد عقل الذكاء الاصطناعي وتمرير المفتاح له مباشرة
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, openai_api_key=openai_api_key)
 
 # 4. بناء واجهة المستخدم بـ Streamlit
 st.set_page_config(page_title="AI Local Chatbot", layout="centered")
@@ -88,7 +90,7 @@ if username:
 
                     ai_response = llm.invoke(prompt).content
                 except Exception as e:
-                    ai_response = "حدث خطأ أثناء الاتصال بالذكاء الاصطناعي، يرجى التحقق من مفتاح الـ API."
+                    ai_response = "حدث خطأ أثناء الاتصال بالذكاء الاصطناعي، يرجى التحقق من مفتاح الـ API في الـ Secrets وصلاحية الحساب."
 
                 st.write(ai_response)
 
