@@ -7,7 +7,6 @@ from langchain_openai import ChatOpenAI
 DB_NAME = "regulations.db"
 CHAT_DB = "chatbot_net.db"
 
-
 def init_chat_db():
     """إنشاء قاعدة بيانات فرعية لحفظ محادثات المستخدمين وفصل الجلسات"""
     conn = sqlite3.connect(CHAT_DB)
@@ -23,14 +22,12 @@ def init_chat_db():
     conn.commit()
     conn.close()
 
-
 def save_message(username, sender, message):
     conn = sqlite3.connect(CHAT_DB)
     cursor = conn.cursor()
     cursor.execute("INSERT INTO chat_history (username, sender, message) VALUES (?, ?, ?)", (username, sender, message))
     conn.commit()
     conn.close()
-
 
 def load_messages(username):
     conn = sqlite3.connect(CHAT_DB)
@@ -39,7 +36,6 @@ def load_messages(username):
     rows = cursor.fetchall()
     conn.close()
     return [{"sender": row[0], "message": row[1]} for row in rows]
-
 
 # تشغيل قاعدة بيانات الذاكرة فوراً
 init_chat_db()
@@ -58,7 +54,7 @@ st.set_page_config(page_title="AI Database Chatbot", layout="centered")
 st.title("🤖 شات بوت الاستعلام من قاعدة البيانات")
 
 # نظام تعدد المستخدمين
-username = st.sidebar.text_input("الرجاء إدخال اسمك لتسجيل الدخول:", value="").strip()
+username = st.sidebar.text_input("الرجاء إدخل اسمك لتسجيل الدخول:", value="").strip()
 
 if username:
     st.sidebar.success(f"مرحباً بك يا {username}!")
@@ -89,21 +85,38 @@ if username:
                     # أ. الاتصال بقاعدة بيانات الإكسل والبحث عن الكلمات المفتاحية
                     conn = sqlite3.connect(DB_NAME)
                     cursor = conn.cursor()
-
-                    # البحث باستخدام المسميات الحقيقية لملفك (رقم المادة ونص المادة)
-                    search_query = f"%{user_input}%"
-                    cursor.execute(
-                        'SELECT "رقم المادة", "نص المادة" FROM legal_articles WHERE "نص المادة" LIKE ? OR "رقم المادة" LIKE ? LIMIT 3',
-                        (search_query, search_query))
-                    rows = cursor.fetchall()
+                    
+                    # قراءة أسماء الأعمدة الموجودة في الجدول لتجنب الأخطاء الإملائية
+                    cursor.execute("PRAGMA table_info(legal_articles)")
+                    columns_info = cursor.fetchall()
+                    
+                    if columns_info:
+                        # بناء استعلام ديناميكي يبحث في كل الأعمدة النصية المتوفرة داخل الجدول
+                        search_conditions = []
+                        search_params = []
+                        search_query = f"%{user_input}%"
+                        
+                        for col in columns_info:
+                            col_name = col[1]
+                            search_conditions.append(f'"{col_name}" LIKE ?')
+                            search_params.append(search_query)
+                        
+                        # دمج الشروط بـ OR للبحث في كل مكان
+                        where_clause = " OR ".join(search_conditions)
+                        sql_statement = f"SELECT * FROM legal_articles WHERE {where_clause} LIMIT 3"
+                        
+                        cursor.execute(sql_statement, search_params)
+                        rows = cursor.fetchall()
                     conn.close()
-
-                    # تجميع سياق البيانات المستخرجة
+                    
+                    # تجميع سياق البيانات المستخرجة بشكل مرن متوافق مع أي هيكلة
                     if rows:
                         db_context = ""
                         for row in rows:
-                            db_context += f"\n- {row[0]}: {row[1]}\n"
-
+                            # دمج بيانات الصف بالكامل مع فلترة القيم الفارغة بشكل صحيح بنظام بايثون
+                            row_text = " | ".join([str(item) for item in row if item is not None])
+                            db_context += f"\n- البيانات المستخرجة: {row_text}\n"
+                    
                     # ب. صياغة التوجيه الصارم (System Prompt) لتقييد البوت
                     strict_prompt = f"""أنت مساعد ذكي ومهمتك هي الإجابة على أسئلة المستخدم بناءً على 'قاعدة البيانات الملحقة' فقط وحصرياً.
 
@@ -111,7 +124,7 @@ if username:
 {db_context}
 
 [شروط صارمة جداً]:
-1. إذا كانت الإجابة على سؤال المستخدم موجودة في [قاعدة البيانات الملحقة]، صغ الإجابة بشكل واضح ومؤدب باللغة العربية مع ذكر رقم المادة.
+1. إذا كانت الإجابة على سؤال المستخدم موجودة في [قاعدة البيانات الملحقة]، صغ الإجابة بشكل واضح ومؤدب باللغة العربية مع ذكر تفاصيل المادة المرفقة.
 2. إذا لم تكن الإجابة موجودة بشكل واضح، أو إذا سألك المستخدم عن أي معلومات عامة خارج نطاق النص الملحق، يجب عليك الرد بالعبارة التالية نصاً ودون أي زيادة: "عذراً، هذه المعلومة غير متوفرة في قاعدة البيانات لدي حالياً."
 3. لا تخترع، لا تخمن، ولا تستخدم معلوماتك العامة السابقة أبداً تحت أي ظرف.
 
@@ -120,9 +133,9 @@ if username:
 
                     # استدعاء النموذج
                     ai_response = llm.invoke(strict_prompt).content
-
+                    
                 except Exception as e:
-                    # حل بديل في حال وجود مشكلة بالـ API: يعرض النص من الإكسل مباشرة
+                    # حل بديل في حال وجود مشكلة بالـ API: يعرض النص المستعلم مباشرة
                     if rows:
                         ai_response = f"⚠️ (تم العثور على المواد التالية في قاعدة البيانات):\n{db_context}"
                     else:
