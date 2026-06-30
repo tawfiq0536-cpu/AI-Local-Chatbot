@@ -3,7 +3,6 @@ import sqlite3
 import os
 from langchain_openai import ChatOpenAI
 
-# 1. إعداد قاعدة البيانات
 DB_NAME = "regulations.db"
 CHAT_DB = "chatbot_net.db"
 
@@ -40,7 +39,6 @@ def load_messages(username):
 init_chat_db()
 
 
-# دالة دمج الملفات مع حفظ اسم الملف كـ "قسم"
 def merge_all_excel_files():
     import pandas as pd
     current_dir = os.getcwd()
@@ -61,10 +59,8 @@ def merge_all_excel_files():
 
                 df.columns = df.columns.str.strip()
 
-                # إخراج اسم القسم من اسم الملف (بدون الامتداد .xlsx أو .csv)
                 section_name = os.path.splitext(file_name)[0].replace(".xlsx", "").replace(" - ورقة1", "")
 
-                # إضافة عمود جديد يحتوي على اسم الملف كـ "قسم" لكل الصفوف
                 df["اسم القسم"] = section_name
 
                 df.to_sql(name="legal_articles", con=conn, if_exists="append", index=False)
@@ -75,11 +71,9 @@ def merge_all_excel_files():
     return success_count
 
 
-# تشغيل الدمج تلقائياً عند بدء التطبيق محلياً لتحديث الداتابيز
 if not os.path.exists(DB_NAME):
     merge_all_excel_files()
 
-# 2. إعداد عقل الذكاء الاصطناعي
 if "OPENAI_API_KEY" in st.secrets:
     openai_api_key = st.secrets["OPENAI_API_KEY"]
 else:
@@ -93,7 +87,6 @@ st.title("🤖 شات بوت الاستعلام من الأقسام واللوا
 
 username = st.sidebar.text_input("الرجاء إدخال اسمك لتسجيل الدخول:", value="").strip()
 
-# زر مخصص في القائمة الجانبية لإعادة دمج الملفات إذا أضفت ملفاً جديداً مستقبلاً
 if st.sidebar.button("تحديث ودمج الملفات الجديدة"):
     count = merge_all_excel_files()
     st.sidebar.success(f"تم تحديث ودمج {count} ملفات بنجاح!")
@@ -123,7 +116,7 @@ if username:
                     cursor = conn.cursor()
 
                     search_query = f"%{user_input}%"
-                    # البحث في نص المادة أو رقم المادة
+             
                     cursor.execute(
                         'SELECT "اسم القسم", "رقم المادة", "نص المادة" FROM legal_articles WHERE "نص المادة" LIKE ? OR "رقم المادة" LIKE ? LIMIT 3',
                         (search_query, search_query))
