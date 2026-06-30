@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 DB_NAME = "regulations.db"
 CHAT_DB = "chatbot_net.db"
 
+
 def init_chat_db():
     """إنشاء قاعدة بيانات فرعية لحفظ محادثات المستخدمين وفصل الجلسات"""
     conn = sqlite3.connect(CHAT_DB)
@@ -22,12 +23,14 @@ def init_chat_db():
     conn.commit()
     conn.close()
 
+
 def save_message(username, sender, message):
     conn = sqlite3.connect(CHAT_DB)
     cursor = conn.cursor()
     cursor.execute("INSERT INTO chat_history (username, sender, message) VALUES (?, ?, ?)", (username, sender, message))
     conn.commit()
     conn.close()
+
 
 def load_messages(username):
     conn = sqlite3.connect(CHAT_DB)
@@ -36,6 +39,7 @@ def load_messages(username):
     rows = cursor.fetchall()
     conn.close()
     return [{"sender": row[0], "message": row[1]} for row in rows]
+
 
 # تشغيل قاعدة بيانات الذاكرة فوراً
 init_chat_db()
@@ -79,25 +83,27 @@ if username:
         # توليد رد الذكاء الاصطناعي المقيّد
         with st.chat_message("assistant"):
             with st.spinner("جاري البحث في قاعدة البيانات..."):
+                rows = []
+                db_context = "لا توجد بيانات مطابقة نهائياً في قاعدة البيانات."
                 try:
                     # أ. الاتصال بقاعدة بيانات الإكسل والبحث عن الكلمات المفتاحية
                     conn = sqlite3.connect(DB_NAME)
                     cursor = conn.cursor()
-                    
-                    # البحث في عمود المحتوى (content) أو العنوان (title) عن كلام المستخدم
+
+                    # البحث باستخدام المسميات الحقيقية لملفك (رقم المادة ونص المادة)
                     search_query = f"%{user_input}%"
-                    cursor.execute("SELECT title, article_number, content FROM legal_articles WHERE content LIKE ? OR title LIKE ? LIMIT 3", (search_query, search_query))
+                    cursor.execute(
+                        'SELECT "رقم المادة", "نص المادة" FROM legal_articles WHERE "نص المادة" LIKE ? OR "رقم المادة" LIKE ? LIMIT 3',
+                        (search_query, search_query))
                     rows = cursor.fetchall()
                     conn.close()
-                    
+
                     # تجميع سياق البيانات المستخرجة
                     if rows:
                         db_context = ""
                         for row in rows:
-                            db_context += f"\n- النظام: {row[0]} | {row[1]} | النص: {row[2]}\n"
-                    else:
-                        db_context = "لا توجد بيانات مطابقة نهائياً في قاعدة البيانات."
-                    
+                            db_context += f"\n- {row[0]}: {row[1]}\n"
+
                     # ب. صياغة التوجيه الصارم (System Prompt) لتقييد البوت
                     strict_prompt = f"""أنت مساعد ذكي ومهمتك هي الإجابة على أسئلة المستخدم بناءً على 'قاعدة البيانات الملحقة' فقط وحصرياً.
 
@@ -105,8 +111,8 @@ if username:
 {db_context}
 
 [شروط صارمة جداً]:
-1. إذا كانت الإجابة على سؤال المستخدم موجودة في [قاعدة البيانات الملحقة]، صغ الإجابة بشكل واضح ومؤدب باللغة العربية مع ذكر اسم النظام ورقم المادة إن وجدا.
-2. إذا لم تكن الإجابة موجودة بشكل واضح، أو إذا سألك المستخدم عن أي معلومات عامة خارج نطاق النص الملحق (مثل الأسئلة العامة أو البرمجة أو الطقس)، يجب عليك الرد بالعبارة التالية نصاً ودون أي زيادة: "عذراً، هذه المعلومة غير متوفرة في قاعدة البيانات لدي حالياً."
+1. إذا كانت الإجابة على سؤال المستخدم موجودة في [قاعدة البيانات الملحقة]، صغ الإجابة بشكل واضح ومؤدب باللغة العربية مع ذكر رقم المادة.
+2. إذا لم تكن الإجابة موجودة بشكل واضح، أو إذا سألك المستخدم عن أي معلومات عامة خارج نطاق النص الملحق، يجب عليك الرد بالعبارة التالية نصاً ودون أي زيادة: "عذراً، هذه المعلومة غير متوفرة في قاعدة البيانات لدي حالياً."
 3. لا تخترع، لا تخمن، ولا تستخدم معلوماتك العامة السابقة أبداً تحت أي ظرف.
 
 سؤال المستخدم: {user_input}
@@ -114,9 +120,13 @@ if username:
 
                     # استدعاء النموذج
                     ai_response = llm.invoke(strict_prompt).content
-                    
+
                 except Exception as e:
-                    ai_response = "حدث خطأ أثناء الاتصال بالذكاء الاصطناعي، يرجى التحقق من الإعدادات."
+                    # حل بديل في حال وجود مشكلة بالـ API: يعرض النص من الإكسل مباشرة
+                    if rows:
+                        ai_response = f"⚠️ (تم العثور على المواد التالية في قاعدة البيانات):\n{db_context}"
+                    else:
+                        ai_response = "عذراً، هذه المعلومة غير متوفرة في قاعدة البيانات لدي حالياً."
 
                 st.write(ai_response)
 
